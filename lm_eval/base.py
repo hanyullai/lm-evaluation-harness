@@ -176,7 +176,7 @@ class BaseLM(LM):
                 # end of text as context
                 context_enc = [self.eot_token_id]
             else:
-                context_enc = self.tok_encode(context)
+                context_enc = self.tokenize(context)
 
             continuation_enc = self.tok_encode(continuation)
 

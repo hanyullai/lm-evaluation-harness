@@ -81,13 +81,25 @@ class GLM130BLM(BaseLM):
         return self._device
 
     def tok_encode(self, string: str):
-        return self.tokenizer(string, return_tensors='pt')['input_ids'][0].tolist()[:-2]
-
-    def tokenize(self, string: str):
         return self.tokenizer(string, return_tensors='pt')['input_ids'][0].tolist()
 
     def tok_decode(self, tokens):
         return self.tokenizer.decode(tokens)
+
+    def loglikelihood(self, requests):
+        new_reqs = []
+        for context, continuation in requests:
+            if context == "":
+                # end of text as context
+                context_enc = [self.eot_token_id]
+            else:
+                context_enc = self.tok_encode(context)
+
+            continuation_enc = self.tok_encode(continuation)[:-2]
+
+            new_reqs.append(((context, continuation), context_enc, continuation_enc))
+
+        return self._loglikelihood_tokens(new_reqs)
 
     def _model_call(self, inps):
         """
@@ -97,17 +109,10 @@ class GLM130BLM(BaseLM):
         returns: a torch tensor of shape [batch, sequence, vocab] with the
         logits returned from the model
         """
-        output = self.model.generate(
-            input_ids=inps, max_new_tokens=5, do_sample=False, num_beams=1
-        )
-        print(output)
-        
-        return self.model.generate(
-            inputs, max_new_tokens=5, do_sample=False, num_beams=2
-        )
-        # return self.model(inps)[0][:, :, :self.vocab_size]
+        with torch.no_grad():
+            return self.model(inps)[0][:, :, :self.vocab_size]
 
     def _model_generate(self, context, max_length, eos_token_id):
         return self.model.generate(
-            context, max_length=max_length, eos_token_id=eos_token_id, do_sample=False
+            input_ids=context, max_new_tokens=max_length, eos_token_id=eos_token_id, do_sample=False, num_beams=16
         )

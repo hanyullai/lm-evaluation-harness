@@ -2,7 +2,11 @@ import transformers
 import torch
 from lm_eval.base import BaseLM
 import torch.nn as nn
+from lm_eval import utils
+from tqdm import tqdm
 
+
+device_map = {'transformer.word_embeddings': 0, 'transformer.layers.0': 0, 'transformer.layers.1': 0, 'transformer.layers.2': 0, 'transformer.layers.3': 0, 'transformer.layers.4': 0, 'transformer.layers.5': 0, 'transformer.layers.6': 0, 'transformer.layers.7': 0, 'transformer.layers.8': 1, 'transformer.layers.9': 1, 'transformer.layers.10': 1, 'transformer.layers.11': 1, 'transformer.layers.12': 1, 'transformer.layers.13': 1, 'transformer.layers.14': 1, 'transformer.layers.15': 1, 'transformer.layers.16': 1, 'transformer.layers.17': 2, 'transformer.layers.18': 2, 'transformer.layers.19': 2, 'transformer.layers.20': 2, 'transformer.layers.21': 2, 'transformer.layers.22': 2, 'transformer.layers.23': 2, 'transformer.layers.24': 2, 'transformer.layers.25': 2, 'transformer.layers.26': 3, 'transformer.layers.27': 3, 'transformer.layers.28': 3, 'transformer.layers.29': 3, 'transformer.layers.30': 3, 'transformer.layers.31': 3, 'transformer.layers.32': 3, 'transformer.layers.33': 3, 'transformer.layers.34': 3, 'transformer.layers.35': 4, 'transformer.layers.36': 4, 'transformer.layers.37': 4, 'transformer.layers.38': 4, 'transformer.layers.39': 4, 'transformer.layers.40': 4, 'transformer.layers.41': 4, 'transformer.layers.42': 4, 'transformer.layers.43': 4, 'transformer.layers.44': 5, 'transformer.layers.45': 5, 'transformer.layers.46': 5, 'transformer.layers.47': 5, 'transformer.layers.48': 5, 'transformer.layers.49': 5, 'transformer.layers.50': 5, 'transformer.layers.51': 5, 'transformer.layers.52': 5, 'transformer.layers.53': 6, 'transformer.layers.54': 6, 'transformer.layers.55': 6, 'transformer.layers.56': 6, 'transformer.layers.57': 6, 'transformer.layers.58': 6, 'transformer.layers.59': 6, 'transformer.layers.60': 6, 'transformer.layers.61': 6, 'transformer.layers.62': 7, 'transformer.layers.63': 7, 'transformer.layers.64': 7, 'transformer.layers.65': 7, 'transformer.layers.66': 7, 'transformer.layers.67': 7, 'transformer.layers.68': 7, 'transformer.layers.69': 7, 'transformer.final_layernorm': 7, 'lm_head': 7}
 
 class GLM130BLM(BaseLM):
     def __init__(
@@ -37,7 +41,7 @@ class GLM130BLM(BaseLM):
         # TODO: update this to be less of a hack once subfolder is fixed in HF
         self.model = transformers.AutoModelForSeq2SeqLM.from_pretrained(
             pretrained,
-            device_map='auto',
+            device_map=device_map,
             torch_dtype=torch.half
         )
         
@@ -112,7 +116,36 @@ class GLM130BLM(BaseLM):
         with torch.no_grad():
             return self.model(inps)[0][:, :, :self.vocab_size]
 
-    def _model_generate(self, context, max_length, eos_token_id):
+    def greedy_until(self, requests):
+        res = []
+
+        def _collate(x):
+            toks = self.tok_encode(x[0])
+            return 0, x[0]
+
+        re_ord = utils.Reorderer(requests, _collate)
+
+        for context, until in tqdm(re_ord.get_reordered()):
+            if isinstance(until, str):
+                until = [until]
+                
+            context_enc = self.tokenizer(context + ' [MASK]', return_tensors='pt').to(self.device)['input_ids']
+
+            cont = self._model_generate(
+                context_enc
+            )
+
+            s = self.tok_decode(cont[0].tolist()[context_enc.shape[1]-2:])
+
+            # partial caching
+            self.cache_hook.add_partial("greedy_until", (context, until), s)
+
+            res.append(s)
+
+        return re_ord.get_original(res)
+
+    def _model_generate(self, context):
+
         return self.model.generate(
-            input_ids=context, max_new_tokens=max_length, eos_token_id=eos_token_id, do_sample=False, num_beams=16
+            input_ids=context, max_new_tokens=5, do_sample=False, num_beams=16
         )
